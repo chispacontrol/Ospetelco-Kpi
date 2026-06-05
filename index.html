@@ -2215,31 +2215,54 @@ function setSyncUI(state, msg) {
 }
 
 async function syncNow() {
-  if (!SHEET_CSV_URL) { setSyncUI("err","Sin Sheet configurado"); return; }
-  setSyncUI("load","Sincronizando...");
+  if (!APPS_SCRIPT_URL) {
+    setSyncUI("err", "Sin URL de API configurada");
+    return;
+  }
+  
+  setSyncUI("load", "Cargando datos en tiempo real...");
+  
   try {
-    const r    = await fetch(SHEET_CSV_URL + "&t=" + Date.now());
-    const text = await r.text();
-    const rows = text.trim().split("\n").slice(1).filter(r => r.trim());
-    const parsed = rows.map(row => {
-      const c = row.split(",").map(x => x.replace(/^"|"$/g,"").trim());
-      return {
-        id: c[0], area: c[1], title: c[2], detail: c[3],
-        owner: c[4], status: c[5], priority: c[6],
-        source: c[7], deadline: c[8], notes: c[9],
-        doubleAlert: (c[9]||"").toUpperCase().includes("DOBLE"),
-        _op: c[6]
+    // Le pedimos los datos directamente a la Web App de Google, sin pasar por el CSV lento
+    const response = await fetch(APPS_SCRIPT_URL);
+    const rows = await response.json();
+    
+    if (rows.status === "error") {
+      throw new Error(rows.message);
+    }
+    
+    // Procesamos las filas que vienen del Excel y actualizamos el diseño
+    let added = 0;
+    let updated = 0;
+    
+    rows.forEach(c => {
+      if (!c[0]) return; // Si la fila no tiene ID, la salteamos
+      const idStr = String(c[0]);
+      const idx = _items.findIndex(item => String(item.id) === idStr);
+      
+      const itemData = {
+        id: idStr, area: c[1], title: c[2], detail: c[3],
+        owner: c[4], status: c[5], priority: c[6], _op: c[6],
+        source: c[7], deadline: c[8], notes: c[9], doubleAlert: false
       };
-    }).filter(i => i.title);
-    ITEMS = parsed;
-    saveLocal();
-    setSyncUI("ok","Sincronizado · " + new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}));
-    document.getElementById("cfgNote").style.display = "none";
-    render(); stats();
-    toast("✓ Datos actualizados desde el Sheet");
-  } catch(e) {
-    setSyncUI("err","Error de conexión");
-    toast("No se pudo conectar al Sheet");
+      
+      if (idx !== -1) {
+        _items[idx] = itemData;
+        updated++;
+      } else {
+        _items.push(itemData);
+        added++;
+      }
+    });
+    
+    saveLocal(); 
+    stats(); 
+    render();
+    setSyncUI("ok", "Conectado al Sheet en tiempo real");
+    toast(`✓ Sincronizado — ${added} nuevos, ${updated} actualizados`);
+  } catch (err) {
+    console.error(err);
+    setSyncUI("err", "Error al conectar con la API");
   }
 }
 
